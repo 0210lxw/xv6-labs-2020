@@ -1,56 +1,61 @@
+#include "kernel/param.h"
 #include "kernel/types.h"
 #include "user/user.h"
-#include "kernel/param.h"
 
-int main(int argc, char *argv[])
-{
-    char *p[MAXARG];
-    int i;
+#define buf_size 512
 
-    if (argc < 2)
-    {
-        fprintf(2, "Usage: %s <command> [args...]\n", argv[0]);
-        exit(1);
+int main(int argc, char *argv[]) {
+  char buf[buf_size + 1] = {0};
+  uint occupy = 0;
+  char *xargv[MAXARG] = {0};
+  int stdin_end = 0;
+
+  for (int i = 1; i < argc; i++) {
+    xargv[i - 1] = argv[i];
+  }
+
+  while (!(stdin_end && occupy == 0)) {
+    // try read from left-hand program
+    if (!stdin_end) {
+      int remain_size = buf_size - occupy;
+      int read_bytes = read(0, buf + occupy, remain_size);
+      if (read_bytes < 0) {
+        fprintf(2, "xargs: read returns -1 error\n");
+      }
+      if (read_bytes == 0) {
+        close(0);
+        stdin_end = 1;
+      }
+      occupy += read_bytes;
     }
+    // process lines read
+    char *line_end = strchr(buf, '\n');
+    while (line_end) {
+      char xbuf[buf_size + 1] = {0};
+      memcpy(xbuf, buf, line_end - buf);
+      xargv[argc - 1] = xbuf;
+      int ret = fork();
+      if (ret == 0) {
+        // i am child
+        if (!stdin_end) {
+          close(0);
+        }
+        if (exec(argv[1], xargv) < 0) {
+          fprintf(2, "xargs: exec fails with -1\n");
+          exit(1);
+        }
+      } else {
+        // trim out line already processed
+        memmove(buf, line_end + 1, occupy - (line_end - buf) - 1);
+        occupy -= line_end - buf + 1;
+        memset(buf + occupy, 0, buf_size - occupy);
+        // harvest zombie
+        int pid;
+        wait(&pid);
 
-    for (i = 1; i < argc; i++)
-    {
-        p[i - 1] = argv[i];
+        line_end = strchr(buf, '\n');
+      }
     }
-
-    char buffer[512]; // 缓冲区用于存储从标准输入读取的行
-
-    while (gets(buffer, sizeof(buffer)))
-    {
-        if (buffer[0] == 0) // 空行跳过
-            continue;
-
-        // 去掉行末的换行符
-        if (buffer[strlen(buffer) - 1] == '\n')
-            buffer[strlen(buffer) - 1] = 0;
-
-        // 将输入行添加到参数数组
-        p[argc - 1] = buffer;
-        p[argc] = 0; // 确保参数数组以 NULL 结尾
-
-        int pid = fork();
-        if (pid < 0)
-        {
-            fprintf(2, "fork failed\n");
-            exit(1);
-        }
-        else if (pid == 0)
-        {
-            exec(argv[1], p);
-            // exec 如果成功，下面的代码不会执行
-            fprintf(2, "exec %s failed\n", argv[1]);
-            exit(1);
-        }
-        else
-        {
-            wait(0); // 父进程等待子进程结束
-        }
-    }
-
-    exit(0);
+  }
+  exit(0);
 }

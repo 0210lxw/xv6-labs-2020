@@ -106,4 +106,6 @@ struct proc {
   int alarm_interval;          //报警间隔
   void (*alarm_handler)();     //报警处理函数
   int ticks_count;             //两次报警间的滴答时间
+  int is_alarming;             //是否正在执行告警处理函数
+  struct trapframe *alarm_trapframe;  //告警陷阱帧
 };

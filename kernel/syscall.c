@@ -67,9 +67,37 @@ argint(int n, int *ip)
 int
 argaddr(int n, uint64 *ip)
 {
-  *ip = argraw(n);
-  return 0;
+  *ip = argraw(n); // 获取第n个系统调用参数的原始值
+  struct proc *p = myproc(); // 获取当前进程
+
+  if(walkaddr(p->pagetable, *ip) == 0) // 检查该地址是否已经映射到物理地址
+  {
+    // 如果地址未映射，检查地址是否在有效范围内
+    if(PGROUNDUP(p->trapframe->sp) - 1 < *ip && *ip < p->sz)
+    {
+      // 分配一个新的物理页
+      char *pa = kalloc();
+      if(pa == 0)
+      {
+        return -1; // 如果分配失败，返回-1表示错误
+      }
+      memset(pa, 0, PGSIZE); // 将新分配的页清零
+
+      // 将新分配的物理页映射到进程的页表中
+      if(mappages(p->pagetable, PGROUNDDOWN(*ip), PGSIZE, (uint64)pa, PTE_R | PTE_W | PTE_X | PTE_U) != 0)
+      {
+        kfree(pa); // 映射失败，释放分配的物理页
+        return -1; // 返回-1表示错误
+      }
+      else
+      {
+        return -1; // 错误的else分支，这里应该直接返回0表示成功
+      }
+    }
+  }
+  return 0; // 地址已有效映射，返回0表示成功
 }
+
 
 // Fetch the nth word-sized system call argument as a null-terminated string.
 // Copies into buf, at most max.

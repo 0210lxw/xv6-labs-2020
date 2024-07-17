@@ -38,18 +38,39 @@ sys_wait(void)
   return wait(p);
 }
 
-uint64
-sys_sbrk(void)
+uint64 sys_sbrk(void)
 {
   int addr;
   int n;
 
+  // 获取系统调用的第一个参数，即需要增加或减少的字节数
   if(argint(0, &n) < 0)
     return -1;
-  addr = myproc()->sz;
-  myproc()->sz += n;
-  /*if(growproc(n) < 0)
-    return -1;*/
+
+  struct proc *p = myproc(); // 获取当前进程
+  addr = p->sz;              // 当前进程的堆顶地址
+  uint64 sz = p->sz;         // 当前进程的堆大小
+
+  if(n > 0)
+  {
+    // 如果n大于0，表示需要增加堆的大小
+    // 这里实现了懒分配，只是增加了堆的大小，但并没有立即分配物理内存
+    p->sz += n;
+  }
+  else if(sz + n > 0)
+  {
+    // 如果n小于0，表示需要减少堆的大小
+    // 检查减少后的堆大小是否仍然大于0
+    sz = uvmdealloc(p->pagetable, sz, sz + n); // 释放多余的虚拟内存
+    p->sz = sz; // 更新进程的堆大小
+  }
+  else
+  {
+    // 如果减少后的堆大小小于或等于0，返回-1表示错误
+    return -1;
+  }
+
+  // 返回原始的堆顶地址
   return addr;
 }
 

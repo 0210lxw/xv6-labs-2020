@@ -401,6 +401,43 @@ bmap(struct inode *ip, uint bn)
     return addr;
   }
 
+  bn -= NINDIRECT;
+
+  //二级间接块的情况
+  if(bn<NDINDIRECT)
+  {
+    int level2_idx=bn/NADDR_PET_BLOCK;//要查找的块号位于二级间接块中的位置
+    int level1_idx=bn%NADDR_PET_BLOCK;//要查找的块号位于一级间接块中的位置
+    //读出二级间接块
+    if((addr = ip->addrs[NDIRECT+1]) == 0)
+    {
+      ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);//分配二级间接块
+    }
+    bp = bread(ip->dev, addr);//读二级间接块
+    a=(uint*)bp->data;//二级间接块的地址
+
+    //如果二级间接块还没有分配
+    if((addr = a[level2_idx]) == 0)
+    {
+      a[level2_idx] = addr = balloc(ip->dev);//分配二级间接块
+      log_write(bp);//写二级间接块
+    }
+    brelse(bp);//释放二级间接块
+
+    //读出一级间接块
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;//一级间接块的地址
+
+    //如果一级间接块还没有分配
+    if((addr = a[level1_idx]) == 0)
+    {
+      a[level1_idx] = addr = balloc(ip->dev);//分配一级间接块
+      log_write(bp);//写一级间接块
+    }
+    brelse(bp);//释放一级间接块
+    return addr;//返回一级间接块的地址
+  }
+
   panic("bmap: out of range");
 }
 
@@ -430,6 +467,32 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  struct buf *bp1;
+  uint *a1;
+  if(ip->addrs[NDIRECT+1])
+  {
+    bp=bread(ip->dev, ip->addrs[NDIRECT+1]);//读二级间接块
+    a=(uint*)bp->data;//二级间接块的地址
+    for(i=0;i<NDINDIRECT/NADDR_PET_BLOCK;i++)
+    {
+      if(a[i])
+      {
+        bp1=bread(ip->dev,a[i]);//读一级间接块
+        a1=(uint*)bp1->data;//一级间接块的地址
+        for(j=0;j<NADDR_PET_BLOCK;j++)//遍历一级间接块
+        {
+          if(a1[j])//如果一级间接块的地址不为0
+            bfree(ip->dev,a1[j]);//释放一级间接块的地址
+        }
+        brelse(bp1);//释放一级间接块
+        bfree(ip->dev,a[i]);//释放二级间接块的地址
+      }
+    }
+    brelse(bp);//释放二级间接块
+    bfree(ip->dev,ip->addrs[NDIRECT+1]);//释放二级间接块
+    ip->addrs[NDIRECT+1]=0;//释放二级间接块
   }
 
   ip->size = 0;

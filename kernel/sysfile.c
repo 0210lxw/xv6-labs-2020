@@ -291,6 +291,7 @@ sys_open(void)
   struct file *f;
   struct inode *ip;
   int n;
+  int depth = 0;
 
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
@@ -320,6 +321,29 @@ sys_open(void)
     iunlockput(ip);
     end_op();
     return -1;
+  }
+
+  // 不断判断该 inode 是否为符号链接
+ while(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+    // 如果访问深度过大，则退出
+    if (depth++ >= 20) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    // 读取对应的 inode
+    if(readi(ip, 0, (uint64)path, 0, MAXPATH) < MAXPATH) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    iunlockput(ip);
+    // 根据文件名称找到对应的 inode
+    if((ip = namei(path)) == 0) {
+      end_op();
+      return -1;
+    }
+    ilock(ip);
   }
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
@@ -484,3 +508,46 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 
+sys_symlink(void)
+{ 
+  char target[MAXPATH];//// 缓冲区，用于存储目标路径
+  char path[MAXPATH];  // 缓冲区，用于存储路径
+  // 用来接收 create 函数返回的 inode
+  struct inode *ip_path;
+
+  // 通过用户态获取目标路径字符串，并将其复制到 target 缓冲区
+  if(argstr(0, target, MAXPATH)<0)
+  {
+    return -1;
+  }
+
+  // 通过用户态获取链接路径字符串，并将其复制到 path 缓冲区
+  if(argstr(1, path, MAXPATH)<0)
+  {
+    return -1;
+  }
+  begin_op();  // 启动文件系统操作
+  // 先找，如果不存在就创建一个类型为 T_SYMLINK 的 inode 节点，分配一个新的 i 节点并返回指向它的指针，如果成功
+  ip_path = create(path, T_SYMLINK, 0, 0);
+  if(ip_path==0)
+  {
+    end_op();// 取消文件系统操作
+    return -1;
+  }
+  // 向新创建的 ip_path 指定的 i 节点写入 MAXPATH 大小的数据
+  if(writei(ip_path,0,(uint64)target,0,MAXPATH)<MAXPATH)
+  {
+    // 释放指向新 i 节点的指针，并将其计数器减一，如果计数器变为 0，则释放 i 节点和相关资源
+    iunlockput(ip_path);
+    end_op();
+    return -1;
+  }
+
+  // 释放指向新 i 节点的指针，并将其计数器减一，如果计数器变为 0，则释放 i 节点和相关资源
+  iunlockput(ip_path);
+  end_op();// 取消文件系统操作
+  return 0;// 返回 0 表示成功
+}
+

@@ -5,6 +5,8 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+
 
 struct cpu cpus[NCPU];
 
@@ -125,6 +127,7 @@ found:
   if(p->pagetable == 0){
     freeproc(p);
     release(&p->lock);
+    memset(&p->vma, 0, sizeof(p->vma));
     return 0;
   }
 
@@ -301,7 +304,12 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
-
+  for(int i = 0; i < VMASIZE; i++) {
+    if(p->vma[i].used){
+      memmove(&(np->vma[i]), &(p->vma[i]), sizeof(p->vma[i]));
+      filedup(p->vma[i].file);
+    }
+  }
   release(&np->lock);
 
   return pid;
@@ -353,6 +361,15 @@ exit(int status)
     }
   }
 
+  for(int i = 0; i < VMASIZE; i++) {
+    if(p->vma[i].used) {
+      if(p->vma[i].flags & MAP_SHARED)
+        filewrite(p->vma[i].file, p->vma[i].addr, p->vma[i].length);
+      fileclose(p->vma[i].file);
+      uvmunmap(p->pagetable, p->vma[i].addr, p->vma[i].length/PGSIZE, 1);
+      p->vma[i].used = 0;
+    }
+  }
   begin_op();
   iput(p->cwd);
   end_op();
